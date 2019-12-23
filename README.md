@@ -1,4 +1,4 @@
-# ezthreads
+# ezjson
 a simple way to serialize / deserialize your classes by using decorators (custom attributes)
 
 To request features or report a bug, open a github issue with details/steps to reproduce
