@@ -67,7 +67,7 @@ type
     for serialization to work, source needs to have its properties
     published / decorated
   *)
-  function EZSerialize<T : TObject, IInterface>(const ASource : T;
+  function EZSerialize<T>(const ASource : T;
     out JSON : String; out Error : String;
     const ACustomName : String = '') : Boolean;
 
@@ -76,23 +76,144 @@ type
     apply matched values to "destination". for mapping to work properly
     a destination needs to have it's properties published / decorated
   *)
-  function EZDeserialize<T : TObject, IInterface>(const ASource : String;
+  function EZDeserialize<T>(const ASource : String;
     const ADestination : T; out Error : String) : Boolean;
 
 implementation
 uses
   fpjson,
-  jsonparser;
+  jsonparser,
+  Rtti,
+  TypInfo;
 
 
 function EZSerialize<T>(const ASource: T; out
   JSON: String; out Error: String; const ACustomName: String): Boolean;
+type
+  TAttrArray = TArray<TCustomAttribute>;
+  TPropArray = TArray<TRttiProperty>;
+var
+  LObj,
+  LInner : TJSONObject;
+  LContext: TRttiContext;
+  LType : TRttiType;
+  LProp : TRttiProperty;
+  LAttributes : TAttrArray;
+  LProps : TPropArray;
+  I, J: Integer;
+  LName,
+  LPropName : String;
+  LFound: Boolean;
+  LPropAttr: JsonProperty;
+  LPropVal: TValue;
 begin
   Result := False;
+  JSON := '{}';
+
+  //nil check
+  if not Assigned(ASource) then
+    Exit;
+
+  //create objects
+  LObj := TJSONObject.Create; //result object
+  LContext := TRttiContext.Create; //gets property info
   try
-    //todo
-  except on E : Exception do
-    Error := E.Message;
+    try
+      //initialize a context
+
+      //using the context get the type info
+      LType := LContext.GetType(TypeInfo(ASource));
+
+      (*
+        for object / interfaces / records we will bundle the properties
+        into a sub-object named with either the custom name, or the default
+        name of the type.
+        1.) if custom name is provided it's used
+        2.) if no custom name but an object decorator is on, then that will be used
+        3.) lastly, the default name will be used which is type name, minus
+            the first character (ie. TObject would shorten to "Object")
+      *)
+      if LType.TypeKind in [tkObject, tkClass,  tkInterface, tkRecord, tkInterfaceRaw] then
+      begin
+        //with the type we need to fetch all attributes
+        LAttributes := LType.GetAttributes;
+
+        //simple check to bail early
+        if Length(LAttributes) < 1 then
+          Exit(True);
+
+        //we don't require the json object attribute, but if one is provided
+        //we'll use the name associated with it
+        LName := '';
+
+        if ACustomName = '' then
+        begin
+          //find properties and custom name
+          for I := 0 to High(LAttributes) do
+            if LAttributes[I] is JsonObject then
+            begin
+              LName := JsonObject(LAttributes[I]).Name;
+              Break;
+            end;
+
+          //when source wasn't decorated with a name extract it from the classname
+          if LName.IsEmpty then
+            LName := IfThen<String>(
+              not (LType.ClassName = ''), //make sure we have a name
+              Copy(LType.ClassName, 2, Length(LType.ClassName) - 1), //either remove T or I
+              'unnamed' //otherwise give a default name for the json object
+            );
+        end
+        else
+          LName := ACustomName;
+
+        //construct and add the inner object with the name we found
+        LInner := TJSONObject.Create;
+        LObj.Add(LName, LInner); //handles freeing inner
+
+        //get all the properties this type has
+        LProps := LType.GetProperties;
+
+        WriteLn('propCount = ', Length(LProps));
+
+        //iterate properties and only add those that have a property decorator on them
+        for I := 0 to High(LProps) do
+        begin
+          LFound := False;
+          LProp := LProps[I];
+          LAttributes := LProp.GetAttributes;
+
+          if Length(LAttributes) < 1 then
+            Continue;
+
+          //opted in?
+          for J := 0 to High(LAttributes) do
+            if LAttributes[I] is JsonProperty then
+            begin
+              LFound := True;
+              LPropAttr := JsonProperty(LAttributes[I]);
+              Break;
+            end;
+
+          //didn't find a json property decorator, move to the next property
+          if not LFound or (not LProp.IsReadable) then
+            Continue;
+
+          //get the value of this property so we can check for type and handle accordingly
+          //LPropVal := LProp.GetValue(@LProp);
+
+          WriteLn(1);
+        end;
+      end;
+
+      //success
+      Result := True;
+    except on E : Exception do
+      Error := E.Message;
+    end;
+  finally
+    LObj.Free;
+    LContext.Free;
   end;
 end;
 
@@ -101,9 +222,13 @@ function EZDeserialize<T>(const ASource: String;
 begin
   Result := False;
   try
-    //todo
-  except on E : Exception do
-    Error := E.Message;
+    try
+      //todo
+
+    except on E : Exception do
+      Error := E.Message;
+    end;
+  finally
   end;
 end;
 

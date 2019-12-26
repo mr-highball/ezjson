@@ -1,6 +1,11 @@
+{$Mode delphi}
+
 program ezjson_test;
 
-uses ezjson;
+uses
+  ezjson,
+  Rtti,
+  TypInfo;
 
 type
 
@@ -33,7 +38,23 @@ end;
   tests a simple object for serialize and deserialize with a single property
 *)
 procedure TestSimple;
+var
+  LTest : TTestDecorated;
+  LJSON,
+  LError : String;
 begin
+  LTest := TTestDecorated.Create;
+
+  //serialize the object to json
+  if not (EZSerialize<TTestDecorated>(LTest, LJSON, LError)) then
+    WriteLn('TestSimple::failed to serialize')
+  else if (LJSON = '') or (LJSON = '{}') then
+    WriteLn('TestSimple::failed, result is empty, or has no properties')
+  else
+    WriteLn('Test::success, result = ', LJSON);
+
+  //cleanup
+  LTest.Free;
 end;
 
 (*
@@ -59,5 +80,9 @@ begin
 end;
 
 begin
+   TestSimple;
+
+   //wait for input
+   ReadLn;
 end.
 
