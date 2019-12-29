@@ -44,6 +44,7 @@ var
   LError : String;
 begin
   LTest := TTestDecorated.Create;
+  LTest.Test := 'a value';
 
   //serialize the object to json
   if not (EZSerialize<TTestDecorated>(LTest, LJSON, LError)) then

@@ -86,7 +86,6 @@ uses
   Rtti,
   TypInfo;
 
-
 function EZSerialize<T>(const ASource: T; out
   JSON: String; out Error: String; const ACustomName: String): Boolean;
 type
@@ -102,10 +101,13 @@ var
   LProps : TPropArray;
   I, J: Integer;
   LName,
-  LPropName : String;
+  LPropName,
+  LRecurseResult,
+  LError : String;
   LFound: Boolean;
   LPropAttr: JsonProperty;
-  LPropVal: TValue;
+  LPropVal, LArrVal: TValue;
+  LJsonArr: TJSONArray;
 begin
   Result := False;
   JSON := '{}';
@@ -119,8 +121,6 @@ begin
   LContext := TRttiContext.Create; //gets property info
   try
     try
-      //initialize a context
-
       //using the context get the type info
       LType := LContext.GetType(TypeInfo(ASource));
 
@@ -174,8 +174,6 @@ begin
         //get all the properties this type has
         LProps := LType.GetProperties;
 
-        WriteLn('propCount = ', Length(LProps));
-
         //iterate properties and only add those that have a property decorator on them
         for I := 0 to High(LProps) do
         begin
@@ -200,11 +198,99 @@ begin
             Continue;
 
           //get the value of this property so we can check for type and handle accordingly
-          //LPropVal := LProp.GetValue(@LProp);
+          LPropVal := LProp.GetValue(ASource);
 
-          WriteLn(1);
+          //write boolean type
+          if LPropVal.Kind = tkBool then
+            LInner.Add(LPropAttr.Name, LPropVal.AsBoolean)
+          //handle all string types the same
+          else if LPropVal.Kind in [tkString, tkAString, tkChar, tkLString, tkUChar, tkUString, tkVariant] then
+            LInner.Add(LPropAttr.Name, LPropVal.AsString)
+          //write int types
+          else if LPropVal.Kind in [tkInteger, tkInt64] then
+            LInner.Add(LPropAttr.Name, LPropVal.AsInt64)
+          //handle floating types different than ints
+          else if LPropVal.Kind in [tkFloat] then
+            LInner.Add(LPropAttr.Name, LPropVal.AsExtended)
+          //special logic for object / interface types
+          else if LPropVal.Kind in [tkClass, tkObject, tkInterface, tkInterfaceRaw, tkRecord] then
+          begin
+            //special checks to find collection types
+            //todo...
+
+            //otherwise recurse
+            //todo...
+            //EZSerialize<TObject>('', LRecurseResult, LError, '');
+          end
+          //for array types we need iterate and serialize each value
+          else if LPropVal.Kind in [tkArray] then
+          begin
+            (*
+              below we can probably consolidate some of this code with the stuff
+              above so we can share a little bit, but I wanted to make sure
+              this was working first...
+            *)
+
+            //handle empty arrays
+            if LPropVal.GetArrayLength < 1 then
+              LInner.Add(LPropAttr.Name, TJSONArray.Create)
+            else
+            begin
+              //initialize a json array to store items
+              LJsonArr := TJSONArray.Create;
+              LInner.Add(LPropAttr.Name, LJsonArr);
+
+              //iterate the array
+              for J := 0 to Pred(LPropVal.GetArrayLength) do
+              begin
+                LArrVal := LPropVal.GetArrayElement(J);
+
+                if LArrVal.Kind = tkBool then
+                  LJsonArr.Add(LArrVal.AsBoolean)
+                //handle all string types the same
+                else if LArrVal.Kind in [tkString, tkAString, tkChar, tkLString, tkUChar, tkUString, tkVariant] then
+                  LJsonArr.Add(LArrVal.AsString)
+                //write int types
+                else if LArrVal.Kind in [tkInteger, tkInt64] then
+                  LJsonArr.Add(LArrVal.AsInt64)
+                //handle floating types different than ints
+                else if LArrVal.Kind in [tkFloat] then
+                  LJsonArr.Add(LArrVal.AsExtended)
+                //for object / interface types recurse
+                else if LArrVal.Kind in [tkClass, tkObject, tkInterface, tkInterfaceRaw, tkRecord] then
+                begin
+
+                  //todo - need to finish / refine other types, below am having
+                  //an issue recursing
+
+                  {if LArrVal.Kind = tkClass then
+                  begin
+                    EZSerialize<TObject>(
+                      LArrVal.AsObject,
+                      LRecurseResult,
+                      LError
+                    );
+                  end
+                  else if LArrVal.Kind in [tkInterface, tkInterfaceRaw] then
+                  begin
+                    EZSerialize<IInterface>(
+                      LArrVal.AsObject,
+                      LRecurseResult,
+                      LError
+                    );
+                  end
+                  else }
+                    raise Exception.Create('unable to serialize [' + LPropAttr.Name + ']');
+                end;
+
+              end;
+            end;
+          end;
         end;
       end;
+
+      //write the json
+      JSON := LObj.AsJSON;
 
       //success
       Result := True;
