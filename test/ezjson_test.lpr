@@ -15,44 +15,82 @@ type
   TTestDecorated = class(TObject)
   private
     FTest : String;
-    function GetTest: String;
-    procedure SetTest(const AValue: String);
+    FTestInt : Integer;
   published
     [JsonProperty('test')]
-    property Test : String read GetTest write SetTest;
+    property Test : String read FTest write FTest;
+
+    [JsonProperty('testInteger')]
+    property TestInt : Integer read FTestInt write FTestInt;
   end;
 
-{ TTestDecorated }
+  { TTestNonDecorated }
+  (*
+    object name decorator is optional, so this object contains
+    at least one decorated property without the object decorator
+  *)
+  TTestNonDecorated = class(TObject)
+  private
+    FTest: String;
+  published
+    [JsonProperty('test')]
+    property Test : String read FTest write FTest;
+  end;
 
-function TTestDecorated.GetTest: String;
+  { TTestComplex }
+
+  TTestComplex = class(TObject)
+  private
+    FDecorated: TTestDecorated;
+    FNonDecorated: TTestNonDecorated;
+  public
+    constructor Create;
+    destructor Destroy; override;
+  published
+    [JsonProperty('decorated')]
+    property Decorated : TTestDecorated read FDecorated;
+
+    [JsonProperty('nonDecorated')]
+    property NonDecorated : TTestNonDecorated read FNonDecorated;
+  end;
+
+
+{ TTestComplex }
+
+constructor TTestComplex.Create;
 begin
-  Result := FTest;
+  FDecorated := TTestDecorated.Create;
+  FNonDecorated := TTestNonDecorated.Create;
 end;
 
-procedure TTestDecorated.SetTest(const AValue: String);
+destructor TTestComplex.Destroy;
 begin
-  FTest := AValue;
+  FDecorated.Free;
+  FNonDecorated.Free;
+  inherited Destroy;
 end;
 
 (*
-  tests a simple object for serialize and deserialize with a single property
+  tests a simple object for serialize and deserialize with simple properties
 *)
 procedure TestSimple;
+const
+  VAL = 'a value';
 var
   LTest : TTestDecorated;
   LJSON,
   LError : String;
 begin
   LTest := TTestDecorated.Create;
-  LTest.Test := 'a value';
+  LTest.Test := VAL;
 
   //serialize the object to json
   if not (EZSerialize<TTestDecorated>(LTest, LJSON, LError)) then
     WriteLn('TestSimple::failed to serialize')
-  else if (LJSON = '') or (LJSON = '{}') then
-    WriteLn('TestSimple::failed, result is empty, or has no properties')
+  else if not (Pos(VAL, LJSON) >= 1) then
+    WriteLn('TestSimple::failed, value not found, result = ', LJSON)
   else
-    WriteLn('Test::success, result = ', LJSON);
+    WriteLn('TestSimple::success, result = ', LJSON);
 
   //cleanup
   LTest.Free;
@@ -62,7 +100,25 @@ end;
   tests whether or not the custom name works for an object
 *)
 procedure TestCustomName;
+const
+  VAL = 'customName';
+var
+  LTest : TTestDecorated;
+  LJSON,
+  LError : String;
 begin
+  LTest := TTestDecorated.Create;
+
+  //serialize the object to json
+  if not (EZSerialize<TTestDecorated>(LTest, LJSON, LError, VAL)) then
+    WriteLn('TestCustomName::failed to serialize')
+  else if not (Pos(VAL, LJSON) >= 1) then
+    WriteLn('TestCustomName::failed, value not found, result = ', LJSON)
+  else
+    WriteLn('TestCustomName::success, result = ', LJSON);
+
+  //cleanup
+  LTest.Free;
 end;
 
 (*
@@ -70,7 +126,53 @@ end;
   (this should be yes)
 *)
 procedure TestNonDecoratedObject;
+const
+  VAL = 'a value';
+var
+  LTest : TTestNonDecorated;
+  LJSON,
+  LError : String;
 begin
+  LTest := TTestNonDecorated.Create;
+  LTest.Test := VAL;
+
+  //serialize the object to json
+  if not (EZSerialize<TTestNonDecorated>(LTest, LJSON, LError)) then
+    WriteLn('TestNonDecoratedObject::failed to serialize')
+  else if not (Pos(VAL, LJSON) >= 1) then
+    WriteLn('TestNonDecoratedObject::failed, value not found, result = ', LJSON)
+  else
+    WriteLn('TestNonDecoratedObject::success, result = ', LJSON);
+
+  //cleanup
+  LTest.Free;
+end;
+
+(*
+  tests serialization of a complex (compound) object with decorated
+  object properties
+*)
+procedure TestComplex;
+const
+  VAL = 'a value';
+var
+  LTest : TTestComplex;
+  LJSON,
+  LError : String;
+begin
+  LTest := TTestComplex.Create;
+  LTest.Decorated.Test := VAL;
+
+  //serialize the object to json
+  if not (EZSerialize<TTestComplex>(LTest, LJSON, LError)) then
+    WriteLn('TestComplex::failed to serialize')
+  else if not (Pos(VAL, LJSON) >= 1) then
+    WriteLn('TestComplex::failed, value not found, result = ', LJSON)
+  else
+    WriteLn('TestComplex::success, result = ', LJSON);
+
+  //cleanup
+  LTest.Free;
 end;
 
 (*
@@ -80,8 +182,13 @@ procedure TestSimpleIntf;
 begin
 end;
 
+
+
 begin
    TestSimple;
+   TestCustomName;
+   TestNonDecoratedObject;
+   TestComplex;
 
    //wait for input
    ReadLn;
