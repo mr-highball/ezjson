@@ -117,7 +117,7 @@ var
   LAttributes : TAttrArray;
   LFallbackAttr : PAttributeTable;
   LProps : TPropArray;
-  I, J: Integer;
+  I, J, LPropCount: Integer;
   LName,
   LPropName,
   LError : String;
@@ -129,6 +129,56 @@ var
   LObjProp : TObject;
   LIntfProp : IInterface;
   LFallbackPropList: PPropList;
+  LIntf : IInterface;
+  LIntfObj : TInterfacedObject;
+
+  (*
+    hacky function that returns an interface reference from a raw pointer.
+    this is put in place due to some "quirks" with generic types & interfaces.
+    if someone sees a better way to do this... let me know.
+  *)
+  function GetInterfaceFromT(AInput : Pointer) : IInterface;
+  begin
+    Result := IInterface(AInput^);
+  end;
+
+  (*
+    provided a prop info pointer, checks to see if the property is decorated
+  *)
+  function IsOptedIn(const AInfo : PPropInfo; out Name : String) : Boolean;
+  var
+    I : Integer;
+    LAttr : TAttributeEntry;
+  begin
+    Result := False;
+    Name := '';
+
+    if not Assigned(AInfo) then
+      Exit;
+
+    if not Assigned(AInfo^.AttributeTable) or (AInfo^.AttributeTable^.AttributeCount < 1) then
+      Exit;
+
+    //simple class name comparison, could probably check type by casting
+    //pointer, but this should work fine too and probably a little quicker
+    for I := 0 to Pred(AInfo^.AttributeTable^.AttributeCount) do
+      if AInfo^.AttributeTable^.AttributesList[I].AttrType^.Name = JsonProperty.ClassName then
+      begin
+        //get the attribute entry (useful for debug but not necessary)
+        LAttr := AInfo^.AttributeTable^.AttributesList[I];
+
+        //call the attribute proc, which returns a custom attribute
+        //that we can cast to our json property (confirmed above with classname check)
+        Name := JsonProperty(TCustomAttribute(LAttr.AttrProc)).Name;
+
+        //default to the property name when no attribute name defined
+        if Name.IsEmpty then
+          Name := AInfo^.Name;
+
+        Exit(True);
+      end;
+  end;
+
 begin
   Success := False;
 
@@ -153,7 +203,7 @@ begin
         3.) lastly, the default name will be used which is type name, minus
             the first character (ie. TObject would shorten to "Object")
       *)
-      if LType.TypeKind in [tkObject, tkClass,  tkInterface, tkRecord, tkInterfaceRaw] then
+      if LType.TypeKind in [tkObject, tkClass, tkRecord, tkInterface, tkInterfaceRaw] then
       begin
         {$Region object / intf}
         //nil check simply ignores source and returns true
@@ -190,6 +240,29 @@ begin
         end
         else
           LName := ACustomName;
+
+        //for interfaces, we need to get the underlying object and recurse
+        if LType.TypeKind in [tkInterfaceRaw, tkInterface] then
+        begin
+          //get interface reference via trickery (otherwise compiler yells)
+          LIntf := GetInterfaceFromT(@ASource);
+
+          //with the interface reference we get a tobject reference and recurse
+          if not Supports(LIntf, TInterfacedObject, LIntfObj) then
+            raise Exception.Create('SerializeObj::interface type cannot be serialized');
+
+          //recurse with object reference
+          SerializeObj<TInterfacedObject>(
+            LIntfObj, //interface -> object
+            AOutput,
+            Success,
+            Error,
+            LName
+          );
+
+          //we're done here
+          Exit;
+        end;
 
         //construct and add the inner object with the name we found
         LInner := TJSONObject.Create;
@@ -251,15 +324,16 @@ begin
               //special checks to find collection types
               //todo...
 
-              //this code is here because LPropVal.AsObject is nil as of writing
-              LObjProp := GetObjectProp(
-                {%H-}TObject(ASource),
-                PPropInfo(LProp.Handle)
-              );
 
               //otherwise recurse
               if LProp.PropertyType.TypeKind = tkClass then
               begin
+                //this code is here because LPropVal.AsObject is nil as of writing
+                LObjProp := GetObjectProp(
+                  {%H-}TObject(ASource),
+                  PPropInfo(LProp.Handle)
+                );
+
                 SerializeObj<TObject>(
                   LObjProp, //LPropVal.AsObject,
                   LInner,
@@ -375,11 +449,91 @@ begin
         else
         begin
           {$Region typinfo fallback}
-          if GetPropList(TObject(ASource), LFallbackPropList) > 0 then
+          if LType.TypeKind = tkClass then
           begin
-            //todo - typinfo...
+            LPropCount := GetPropList(TObject(ASource), LFallbackPropList);
 
-          end;
+            //for opted in properties we need to add them to the inner object
+            for I := 0 to Pred(LPropCount) do
+            begin
+              if not IsOptedIn(LFallbackPropList^[I], LName) then
+                Continue;
+
+              case LFallbackPropList^[I].PropType^.Kind of
+                //handle simple types
+                tkBool:
+                  LInner.Add(LName, TJSONBoolean.Create(GetPropValue(TObject(ASource), LFallbackPropList^[I])));
+                tkString, tkAString, tkChar, tkLString, tkUChar, tkUString, tkVariant:
+                  LInner.Add(LName, TJSONString.Create(GetPropValue(TObject(ASource), LFallbackPropList^[I])));
+                tkInteger, tkInt64:
+                  LInner.Add(LName, Integer(GetPropValue(TObject(ASource), LFallbackPropList^[I])));
+                tkFloat:
+                  LInner.Add(LName, Extended(GetPropValue(TObject(ASource), LFallbackPropList^[I])));
+                //handle complex types
+                tkClass:
+                  begin
+                    LObjProp := GetObjectProp(
+                      {%H-}TObject(ASource),
+                      LFallbackPropList^[I]
+                    );
+
+                    SerializeObj<TObject>(
+                      LObjProp, //LPropVal.AsObject,
+                      LInner,
+                      LSuccess,
+                      LError,
+                      LPropAttr.Name
+                    );
+
+                    if not LSuccess then
+                      Exit;
+                  end;
+                tkInterface, tkInterfaceRaw:
+                  begin
+                    LIntfProp := GetInterfaceProp(
+                      {%H-}TObject(ASource),
+                      LFallbackPropList^[I]
+                    );
+
+                    SerializeObj<IInterface>(
+                      LIntfProp, //LPropVal.AsInterface,
+                      LInner,
+                      LSuccess,
+                      LError,
+                      LPropAttr.Name
+                    );
+
+                    if not LSuccess then
+                      Exit;
+                  end;
+                else
+                  raise Exception.Create('unable to serialize [' + LName + ']');
+              end;
+            end;
+          end
+          else if LType.TypeKind in [tkInterface, tkInterfaceRaw] then
+          begin
+
+            //get interface reference via trickery (otherwise compiler yells)
+            LIntf := GetInterfaceFromT(@ASource);
+
+            //with the interface reference we get a tobject reference and recurse
+            if not Supports(LIntf, TInterfacedObject, LIntfObj) then
+              raise Exception.Create('SerializeObj::interface type cannot be serialized');
+
+            //recurse with object reference
+            SerializeObj<TInterfacedObject>(
+              LIntfObj, //interface -> object
+              LInner, //use inner here since we are gathering props
+              LSuccess,
+              LError
+            );
+
+            if not LSuccess then
+              raise Exception.Create('SerializeObject::' + LError);
+          end
+          else
+            raise Exception.Create('SerializeObj::other types not implemented');
           {$EndRegion}
         end;
         {$EndRegion}

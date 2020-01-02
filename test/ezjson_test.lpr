@@ -10,7 +10,11 @@ uses
 type
 
   { TTestDecorated }
-
+  (*
+    a simple object decorated with a custom name to be used when serializing and
+    deserializing, as well as some simple typed properties to include in
+    serialization
+  *)
   [JsonObject('myTestObject')]
   TTestDecorated = class(TObject)
   private
@@ -54,6 +58,50 @@ type
     property NonDecorated : TTestNonDecorated read FNonDecorated;
   end;
 
+  { ITestSimpleIntf }
+  (*
+    a simple property interface with a decorated object name.
+    we cannot decorate properties here, because this results
+    in a compile time error (thinking because interfaces have no "published"
+    section
+  *)
+  [JsonObject('interfacesCanHaveNames')]
+  ITestSimpleIntf = interface
+    ['{092BD9A8-3572-4128-BBB3-18B7803C2214}']
+    function GetTest: String;
+    procedure SetTest(const AValue: String);
+
+    property Test : String read GetTest write SetTest;
+  end;
+
+  { TTestSimpleIntfImpl }
+  (*
+    when implementing an interface and json serialization is needed,
+    the object implementation needs to have the json property decorators
+    *not* the interface
+  *)
+  TTestSimpleIntfImpl = class(TInterfacedObject, ITestSimpleIntf)
+  private
+    FTest : String;
+    function GetTest: String;
+    procedure SetTest(const AValue: String);
+  published
+
+    [JsonProperty('test')]
+    property Test : String read GetTest write SetTest;
+  end;
+
+{ TTestSimpleIntfImpl }
+
+function TTestSimpleIntfImpl.GetTest: String;
+begin
+  Result := FTest;
+end;
+
+procedure TTestSimpleIntfImpl.SetTest(const AValue: String);
+begin
+  FTest := AValue;
+end;
 
 { TTestComplex }
 
@@ -179,7 +227,23 @@ end;
   tests if a simple interface decorated works like objects
 *)
 procedure TestSimpleIntf;
+const
+  VAL = 'a value';
+var
+  LTest : ITestSimpleIntf;
+  LJSON,
+  LError : String;
 begin
+  LTest := TTestSimpleIntfImpl.Create;
+  LTest.Test := VAL;
+
+  //serialize the object to json
+  if not (EZSerialize<ITestSimpleIntf>(LTest, LJSON, LError)) then
+    WriteLn('TestSimpleIntf::failed to serialize')
+  else if not (Pos(VAL, LJSON) >= 1) then
+    WriteLn('TestSimpleIntf::failed, value not found, result = ', LJSON)
+  else
+    WriteLn('TestSimpleIntf::success, result = ', LJSON);
 end;
 
 
@@ -189,6 +253,7 @@ begin
    TestCustomName;
    TestNonDecoratedObject;
    TestComplex;
+   TestSimpleIntf;
 
    //wait for input
    ReadLn;
