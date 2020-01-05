@@ -4,7 +4,7 @@ program ezjson_test;
 
 uses
   ezjson,
-  Rtti,
+  {%H-}Rtti,
   TypInfo;
 
 type
@@ -246,14 +246,45 @@ begin
     WriteLn('TestSimpleIntf::success, result = ', LJSON);
 end;
 
+procedure TestSimpleDeserialize;
+const
+  VAL = 'a value';
+var
+  LTest : TTestDecorated;
+  LJSON,
+  LError : String;
+begin
+  //create a simple object and assign the test value
+  LTest := TTestDecorated.Create;
+  LTest.Test := VAL;
 
+  //serialize the object to json so we can use this for deserialize
+  if not (EZSerialize<TTestDecorated>(LTest, LJSON, LError)) then
+    WriteLn('TestSimpleDeserialize::failed to serialize')
+  else if not (Pos(VAL, LJSON) >= 1) then
+    WriteLn('TestSimpleDeserialize::failed, value not found, result = ', LJSON);
+
+  //now we can update the value of the object to nothing and attempt to
+  //set it via deserialization
+  LTest.Test := '';
+  if not (EZDeserialize<TTestDecorated>(LJSON, LTest, LError)) then
+    WriteLn('TestSimpleDeserialize::failed to deserialize')
+  else if not (LTest.Test = VAL) then
+    WriteLn('TestSimpleDeserialize::failed to deserialize, value not found')
+  else
+    WriteLn('TestSimpleDeserialize::success');
+
+  //cleanup
+  LTest.Free;
+end;
 
 begin
-   TestSimple;
-   TestCustomName;
-   TestNonDecoratedObject;
-   TestComplex;
-   TestSimpleIntf;
+   //TestSimple;
+   //TestCustomName;
+   //TestNonDecoratedObject;
+   //TestComplex;
+   //TestSimpleIntf;
+   TestSimpleDeserialize;
 
    //wait for input
    ReadLn;

@@ -35,7 +35,9 @@ uses
 type
 
   { TNamedAttribute }
-
+  (*
+    base attribute type for ezjson, offerring shared name property
+  *)
   TNamedAttribute = class(TCustomAttribute)
   strict private
     FName : String;
@@ -101,7 +103,7 @@ type
   {$EndRegion}
 implementation
 uses
-  Rtti,
+  {%H-}Rtti,
   TypInfo;
 
 procedure SerializeObj<T>(const ASource : T; const AOutput : TJSONObject;
@@ -451,7 +453,7 @@ begin
           {$Region typinfo fallback}
           if LType.TypeKind = tkClass then
           begin
-            LPropCount := GetPropList(TObject(ASource), LFallbackPropList);
+            LPropCount := GetPropList({%H-}TObject(ASource), LFallbackPropList);
 
             //for opted in properties we need to add them to the inner object
             for I := 0 to Pred(LPropCount) do
@@ -462,13 +464,13 @@ begin
               case LFallbackPropList^[I].PropType^.Kind of
                 //handle simple types
                 tkBool:
-                  LInner.Add(LName, TJSONBoolean.Create(GetPropValue(TObject(ASource), LFallbackPropList^[I])));
+                  LInner.Add(LName, TJSONBoolean.Create(GetPropValue({%H-}TObject(ASource), LFallbackPropList^[I])));
                 tkString, tkAString, tkChar, tkLString, tkUChar, tkUString, tkVariant:
-                  LInner.Add(LName, TJSONString.Create(GetPropValue(TObject(ASource), LFallbackPropList^[I])));
+                  LInner.Add(LName, TJSONString.Create(GetPropValue({%H-}TObject(ASource), LFallbackPropList^[I])));
                 tkInteger, tkInt64:
-                  LInner.Add(LName, Integer(GetPropValue(TObject(ASource), LFallbackPropList^[I])));
+                  LInner.Add(LName, Integer(GetPropValue({%H-}TObject(ASource), LFallbackPropList^[I])));
                 tkFloat:
-                  LInner.Add(LName, Extended(GetPropValue(TObject(ASource), LFallbackPropList^[I])));
+                  LInner.Add(LName, Extended(GetPropValue({%H-}TObject(ASource), LFallbackPropList^[I])));
                 //handle complex types
                 tkClass:
                   begin
@@ -587,16 +589,271 @@ end;
 
 function EZDeserialize<T>(const ASource: String;
   const ADestination: T; out Error: String): Boolean;
+type
+  TAttrArray = TArray<TCustomAttribute>;
+  TPropArray = TArray<TRttiProperty>;
+var
+  LData , LJsonProp: TJSONData;
+  LObj : TJSONObject;
+  LContext: TRttiContext;
+  LType : TRttiType;
+  LIntf : IInterface;
+  LintfObj : TInterfacedObject;
+  I : Integer;
+
+  //same as serialize, need to trick compiler to get interface
+  function GetInterfaceFromT(AInput : Pointer) : IInterface;
+  begin
+    Result := IInterface(AInput^);
+  end;
+
+  (*
+    given a property name and an object, will try to find a matching opted-in
+    property, then set the value accordingly
+  *)
+  function SetProperty(const AProperty: String; const AObj : TObject;
+    const AValue : Variant; const AType : TJSONtype) : Boolean;
+  var
+    LContext : TRttiContext;
+    LType : TRttiType;
+    LAttributes : TAttrArray;
+    LProp : TRttiProperty;
+    LProps : TPropArray;
+    LPropInfo : PPropInfo;
+    I, J : Integer;
+    LFound : Boolean;
+    LError : String;
+    LTypAttributes : PAttributeTable;
+  begin
+    Result := False;
+    LContext := TRttiContext.Create;
+    try
+      //get the type so we can fetch attributes / properties
+      LType := LContext.GetType(TypeInfo(AObj));
+      LAttributes := LType.GetAttributes;
+
+      //special case is that since we serialize objects inside of an
+      //inner "wrapper" object, then we need to check that
+      if AType = jtObject then
+      begin
+        //see if the "property" is the object we're working with
+        if Pos(AProperty.ToLower, LowerCase(AObj.ClassName)) > 0 then
+        begin
+          if EZDeserialize<TObject>(
+            TJSONObject({%H-}Pointer(PtrInt(AValue))^).AsJSON,
+            AObj,
+            LError
+          ) then
+            Exit(True)
+          else
+            Exit;
+        end
+        //lastly check to make sure we don't have a jsonobject attribute with this name
+        //if so we can bail early by recursing
+        else
+        begin
+          //rtti unit approach first since most delphi like
+          if Length(LAttributes) > 0 then
+          begin
+            for I := 0 to High(LAttributes) do
+              if LAttributes[I] is JsonObject then
+                if JsonObject(LAttributes[I]).Name.ToLower = AProperty.ToLower then
+                begin
+                  if EZDeserialize<TObject>(
+                    TJSONObject({%H-}Pointer(PtrInt(AValue))^).AsJSON,
+                    AObj,
+                    LError
+                  ) then
+                    Exit(True)
+                  else
+                    Exit;
+                end;
+          end
+          //fallback typinfo approach in case rtti unit doesn't report
+          //any attributes (as of writing, this is the case)
+          else
+          begin
+            LTypAttributes := GetAttributeTable(TypeInfo(AObj));
+
+            if Assigned(LTypAttributes) or (LTypAttributes^.AttributeCount < 1) then
+            begin
+              for I := 0 to Pred(LTypAttributes^.AttributeCount) do
+              begin
+                //get the property info
+                LPropInfo := GetPropInfo(LTypAttributes^.AttributesList[I].AttrType, LTypAttributes^.AttributesList[I].AttrType^.Name);
+
+                //with the propinfo we can...
+                //todo...
+              end;
+            end;
+          end;
+        end;
+      end;
+
+      //otherwise, this is a normal property that needs to be set, so fetch
+      //the properties from the type
+      LProps := LType.GetProperties;
+      LFound := False;
+
+      //iterate to find a match, and try to set if found
+      for I := 0 to High(LProps) do
+      begin
+        LAttributes := LProps[I].GetAttributes;
+
+        //no attributes, no dice
+        if Length(LAttributes) < 1 then
+          Continue;
+
+        //see if we can find the property attribute (opted-in)
+        for J := 0 to High(LAttributes) do
+          if LAttributes[J] is JsonProperty then
+            if JsonProperty(LAttributes[J]).Name.ToLower = AProperty.ToLower then
+            begin
+              LProp := LProps[I];
+              LFound := True;
+              Break;
+            end;
+
+        //for now we'll operate under the assumption that "extra" properties
+        //can exist in the source json, and not on our object representations.
+        //this may change in the future, but seems like a safe bet
+        if not LFound then
+          Continue;
+
+        //now that we've made all the checks, we can attempt to set the value
+        case AType of
+          //simple types we can just use the variant version of set prop
+          jtBoolean, jtNumber, jtString:
+            begin
+              SetPropValue(AObj, LProp.Name, AValue);
+              Break;
+            end;
+          //todo object types...
+          jtObject:
+            begin
+            end;
+          //otherwise, we cannot handle this case
+          else
+            Exit;
+        end;
+      end;
+
+
+      //success
+      Result := True;
+    finally
+      LContext.Free;
+    end;
+  end;
+
 begin
   Result := False;
+
+  //check to see if we have valid json
+  LData := GetJSON(ASource);
+  if not Assigned(LData) then
+  begin
+    Error := 'EZDeserialize::invalid source json';
+    Exit;
+  end;
+
+  //input needs to be a json object for us to deserialize
+  if not (LData is TJSONObject) then
+  begin
+    Error := 'EZDeserialize::json is not an object';
+    LData.Free;
+    Exit;
+  end;
+
+  //cast to object to make things easier to work with
+  LObj := TJSONObject(LData);
+  LContext := TRttiContext.Create;
   try
     try
-      //todo
+      //we can't deserialize if the input source has no properties, but
+      //in this case don't fail, just bail early
+      if LObj.Count < 1 then
+        Exit(True);
 
+      //using the context get the type info
+      LType := LContext.GetType(TypeInfo(ADestination));
+
+      if not Assigned(LType) then
+      begin
+        Error := 'EZDeserialize::failed to determine type';
+        Exit;
+      end;
+
+      //we need to ensure input is either an object / record / interface
+      if LType.TypeKind in [tkClass, tkObject, tkRecord] then
+      begin
+        //iterate json object's properties
+        for I := 0 to Pred(LObj.Count) do
+        begin
+          LJsonProp := LObj.Items[I];
+
+          //depending on the type of property handle things differently
+          case LJsonProp.JSONType of
+            //simple types can be passed through just like they are
+            jtBoolean, jtNumber, jtString:
+              begin
+                if not SetProperty(
+                  LObj.Names[I],
+                  TObject(ADestination),
+                  LJsonProp.Value,
+                  LJsonProp.JSONType
+                ) then
+                  raise Exception.Create('EZDeserialize::unable to deserialize ' + LObj.Names[I]);
+              end;
+            //for object types we need to just pass the entire
+            jtObject:
+              begin
+                if not SetProperty(
+                  LObj.Names[I],
+                  TObject(ADestination),
+                  {%H-}PtrInt(@LJsonProp), //cast to pointer
+                  LJsonProp.JSONType //is json object
+                ) then
+                  raise Exception.Create('EZDeserialize::unable to deserialize ' + LObj.Names[I]);
+              end;
+            //move on for nulls
+            jtNull:
+              Continue;
+            else
+              raise Exception.Create('EZDeserialize::invalid json property');
+          end;
+        end;
+      end
+      //for interface we need get the underlying object and recurse
+      else if LType.TypeKind in [tkInterface, tkInterfaceRaw] then
+      begin
+        LIntf := GetInterfaceFromT(@ASource);
+
+        //with the interface reference we get a tobject reference and recurse
+        if not Supports(LIntf, TInterfacedObject, LIntfObj) then
+          raise Exception.Create('EZDeserialize::interface type cannot be serialized');
+
+        //recurse with object reference
+        Result := EZDeserialize<TInterfacedObject>(
+          ASource, //results in a second parse... but that's ok for now
+          LIntfObj, //interface -> object
+          Error
+        );
+
+        Exit;
+      end
+      //unable to deserialize with this type
+      else
+        raise Exception.Create('EZDeserialize::invalid destination');
+
+      //success
+      Result := True;
     except on E : Exception do
       Error := E.Message;
     end;
   finally
+    LData.Free;
+    LContext.Free;
   end;
 end;
 
