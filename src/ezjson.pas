@@ -617,9 +617,11 @@ var
     LContext : TRttiContext;
     LType : TRttiType;
     LAttributes : TAttrArray;
+    LAttr : TCustomAttribute;
     LProp : TRttiProperty;
     LProps : TPropArray;
     LPropInfo : PPropInfo;
+    LTypData : PTypeData;
     I, J : Integer;
     LFound : Boolean;
     LError : String;
@@ -628,6 +630,8 @@ var
     Result := False;
     LContext := TRttiContext.Create;
     try
+      WriteLn('nestedDebugAttrCount = ', Length(TRttiContext.Create.GetType(TypeInfo(AObj)).GetAttributes));
+
       //get the type so we can fetch attributes / properties
       LType := LContext.GetType(TypeInfo(AObj));
       LAttributes := LType.GetAttributes;
@@ -673,17 +677,31 @@ var
           //any attributes (as of writing, this is the case)
           else
           begin
-            LTypAttributes := GetAttributeTable(TypeInfo(AObj));
+            //get the attribute table
+            LTypAttributes := GetTypeData(TypeInfo(AObj))^.AttributeTable;
 
-            if Assigned(LTypAttributes) or (LTypAttributes^.AttributeCount < 1) then
+            if Assigned(LTypAttributes) and (LTypAttributes^.AttributeCount > 0) then
             begin
               for I := 0 to Pred(LTypAttributes^.AttributeCount) do
               begin
-                //get the property info
-                LPropInfo := GetPropInfo(LTypAttributes^.AttributesList[I].AttrType, LTypAttributes^.AttributesList[I].AttrType^.Name);
+                //get a reference to custom attribute
+                LAttr := TCustomAttribute(LTypAttributes^.AttributesList[I].AttrProc);
 
-                //with the propinfo we can...
-                //todo...
+                //if we find a json object attribute then recurse
+                if Assigned(LAttr)
+                  and (LAttr is JsonObject)
+                  and (JsonObject(LAttr).Name.ToLower = AProperty.ToLower
+                ) then
+                begin
+                  if EZDeserialize<TObject>(
+                    TJSONObject({%H-}Pointer(PtrInt(AValue))^).AsJSON,
+                    AObj,
+                    LError
+                  ) then
+                    Exit(True)
+                  else
+                    Exit;
+                end;
               end;
             end;
           end;
@@ -749,6 +767,8 @@ var
 begin
   Result := False;
 
+  WriteLn('debugAttributeCount = ', Length(TRttiContext.Create.GetType(TypeInfo(ADestination)).GetAttributes));
+
   //check to see if we have valid json
   LData := GetJSON(ASource);
   if not Assigned(LData) then
@@ -799,7 +819,7 @@ begin
               begin
                 if not SetProperty(
                   LObj.Names[I],
-                  TObject(ADestination),
+                  ADestination,
                   LJsonProp.Value,
                   LJsonProp.JSONType
                 ) then
@@ -810,7 +830,7 @@ begin
               begin
                 if not SetProperty(
                   LObj.Names[I],
-                  TObject(ADestination),
+                  ADestination,
                   {%H-}PtrInt(@LJsonProp), //cast to pointer
                   LJsonProp.JSONType //is json object
                 ) then
