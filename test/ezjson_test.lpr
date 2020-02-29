@@ -4,7 +4,6 @@ program ezjson_test;
 
 uses
   ezjson,
-  {%H-}Rtti,
   TypInfo;
 
 type
@@ -258,8 +257,6 @@ begin
   LTest := TTestDecorated.Create;
   LTest.Test := VAL;
 
-  WriteLn('attributeCount = ', Length(TRttiContext.Create.GetType(TypeInfo(LTest)).GetAttributes));
-
   //serialize the object to json so we can use this for deserialize
   if not (EZSerialize<TTestDecorated>(LTest, LJSON, LError)) then
     WriteLn('TestSimpleDeserialize::failed to serialize')
@@ -281,11 +278,11 @@ begin
 end;
 
 begin
-   //TestSimple;
-   //TestCustomName;
-   //TestNonDecoratedObject;
-   //TestComplex;
-   //TestSimpleIntf;
+   TestSimple;
+   TestCustomName;
+   TestNonDecoratedObject;
+   TestComplex;
+   TestSimpleIntf;
    TestSimpleDeserialize;
 
    //wait for input

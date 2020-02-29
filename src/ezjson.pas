@@ -630,10 +630,8 @@ var
     Result := False;
     LContext := TRttiContext.Create;
     try
-      WriteLn('nestedDebugAttrCount = ', Length(TRttiContext.Create.GetType(TypeInfo(AObj)).GetAttributes));
-
       //get the type so we can fetch attributes / properties
-      LType := LContext.GetType(TypeInfo(AObj));
+      LType := LContext.GetType(PTypeInfo(AObj.ClassInfo));
       LAttributes := LType.GetAttributes;
 
       //special case is that since we serialize objects inside of an
@@ -678,7 +676,7 @@ var
           else
           begin
             //get the attribute table
-            LTypAttributes := GetTypeData(TypeInfo(AObj))^.AttributeTable;
+            LTypAttributes := GetTypeData(PTypeInfo(AObj.ClassInfo))^.AttributeTable;
 
             if Assigned(LTypAttributes) and (LTypAttributes^.AttributeCount > 0) then
             begin
@@ -767,8 +765,6 @@ var
 begin
   Result := False;
 
-  WriteLn('debugAttributeCount = ', Length(TRttiContext.Create.GetType(TypeInfo(ADestination)).GetAttributes));
-
   //check to see if we have valid json
   LData := GetJSON(ASource);
   if not Assigned(LData) then
@@ -796,7 +792,7 @@ begin
         Exit(True);
 
       //using the context get the type info
-      LType := LContext.GetType(TypeInfo(ADestination));
+      LType := LContext.GetType(PTypeInfo(ADestination.ClassInfo));
 
       if not Assigned(LType) then
       begin
