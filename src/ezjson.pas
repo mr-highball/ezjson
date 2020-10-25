@@ -369,7 +369,7 @@ begin
                 raise Exception.Create('unable to serialize [' + LPropAttr.Name + ']');;
             end
             //for array types we need iterate and serialize each value
-            else if LProp.PropertyType.TypeKind in [tkArray] then
+            else if LProp.PropertyType.TypeKind in [tkArray, tkDynArray] then
             begin
               (*
                 below we can probably consolidate some of this code with the stuff
