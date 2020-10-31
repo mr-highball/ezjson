@@ -626,6 +626,11 @@ var
     LFound : Boolean;
     LError : String;
     LTypAttributes : PAttributeTable;
+    LIntfTable: pinterfacetable;
+    LObj : TObject;
+    LJsonObj : TJSONObject;
+    LIntf : IInterface;
+    LJsonArr: TJSONArray;
   begin
     Result := False;
     LContext := TRttiContext.Create;
@@ -742,15 +747,60 @@ var
           jtBoolean, jtNumber, jtString:
             begin
               SetPropValue(AObj, LProp.Name, AValue);
-              Break;
             end;
-          //todo object types...
           jtObject:
             begin
+              //for object types we need to cast a value as the json object
+              LJsonObj := TJSONObject(Pointer(PtrInt(AValue))^);
+
+              //when we found an object, then we need to recurse for all props?
+              if LProp.PropertyType.TypeKind in [tkObject] then
+              begin
+                //todo...
+                LObj := LType.ClassType.Create;
+
+                //recurse...?
+
+                //now set this property
+                SetObjectProp(AObj, LProp.Name, LObj);
+              end
+              //interface properties might be tricky... since we won't know
+              //the concrete class to construct from. this will need some looking
+              //into if possible
+              else if LProp.PropertyType.TypeKind in [tkInterface, tkInterfaceRaw] then
+              begin
+                LIntfTable := LType.GetInterfaceTable;
+
+                if Assigned(LIntfTable) and (LIntfTable^.EntryCount > 0) then
+                  if LType.GetInterfaceByStr(LIntfTable^.Entries[Pred(LIntfTable^.EntryCount)].IIDStr^, LIntf) then
+                  begin
+                    //we have the interface property? if so perhaps we can find class type with obj reference?
+                    raise ENotImplemented.Create('interface assignment not impl');
+                  end;
+              end;
             end;
+          jtArray:
+            begin
+              //for arrays we need to determine the type of the object property
+              //and for simple types assign, for object/interfaces construct
+              //todo...
+
+              LJsonArr := TJSONArray(Pointer(PtrInt(AValue))^);
+              //LArr := ***;
+              //SetLength(LArr, LJsonArr.Count);
+
+              //iterate input and assign to result
+              for J := 0 to Pred(LJsonArr.Count) do
+              begin
+                //simple types set, object/intf types recurse
+                //...
+              end;
+
+              //SetDynArrayProp(AObj, LProp.Name, ***);
+            end
           //otherwise, we cannot handle this case
           else
-            Exit;
+            Continue;
         end;
       end;
 
@@ -891,4 +941,3 @@ begin
 end;
 
 end.
-
